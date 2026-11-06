@@ -180,12 +180,12 @@ module Reasoning =
         | Add(a,b) -> "(" + show a + "+" + show b + ")"
         | Mul(a,b) -> "(" + show a + "*" + show b + ")"
     let local = function
-        | Add(Const 0I,x) -> Some(AddZeroL,x)
-        | Add(x,Const 0I) -> Some(AddZeroR,x)
-        | Mul(Const 1I,x) -> Some(MulOneL,x)
-        | Mul(x,Const 1I) -> Some(MulOneR,x)
-        | Mul(Const 0I,_) -> Some(MulZeroL,Const 0I)
-        | Mul(_,Const 0I) -> Some(MulZeroR,Const 0I)
+        | Add(Const a,x) when a = 0I -> Some(AddZeroL,x)
+        | Add(x,Const a) when a = 0I -> Some(AddZeroR,x)
+        | Mul(Const a,x) when a = 1I -> Some(MulOneL,x)
+        | Mul(x,Const a) when a = 1I -> Some(MulOneR,x)
+        | Mul(Const a,_) when a = 0I -> Some(MulZeroL,Const 0I)
+        | Mul(_,Const a) when a = 0I -> Some(MulZeroR,Const 0I)
         | Add(Const a,Const b) -> Some(FoldAdd,Const(a+b))
         | Mul(Const a,Const b) -> Some(FoldMul,Const(a*b))
         | _ -> None
