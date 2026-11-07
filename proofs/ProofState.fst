@@ -183,3 +183,60 @@ let sample_tampered_rejected ()
   : Lemma (ensures (
       replay sample_add_zero.before (EConst 999)
         [{ sample_add_zero with after = EConst 999 }] = false)) = ()
+
+(* Every accepted contextual step strictly decreases AST size, so a
+   certificate cannot be an infinite rewrite chain. The bound is on the
+   certificate, not an extraction of the F# search queue. *)
+let rec size (e:expr) : Tot nat (decreases e) =
+  match e with
+  | EConst _ | EVar _ -> 1
+  | EAdd (a, b) | EMul (a, b) -> 1 + size a + size b
+
+let local_decreases (e:expr) (r:rule) (e2:expr)
+  : Lemma (requires (local_step e = Some (r, e2)))
+          (ensures (size e2 < size e)) = ()
+
+let rec applies_decreases (e:expr) (r:rule) (e2:expr)
+  : Lemma (requires (applies e r e2))
+          (ensures (size e2 < size e))
+          (decreases e) =
+  match e with
+  | EConst _ | EVar _ -> ()
+  | EAdd (a, b) ->
+    (match local_step e with
+     | Some (r', e') ->
+       if r = r' && e2 = e' then local_decreases e r e2
+       else ()
+     | None -> ());
+    (match e2 with
+     | EAdd (a', b') ->
+       if b = b' && applies a r a' then applies_decreases a r a'
+       else if a = a' && applies b r b' then applies_decreases b r b'
+       else ()
+     | _ -> ())
+  | EMul (a, b) ->
+    (match local_step e with
+     | Some (r', e') ->
+       if r = r' && e2 = e' then local_decreases e r e2
+       else ()
+     | None -> ());
+    (match e2 with
+     | EMul (a', b') ->
+       if b = b' && applies a r a' then applies_decreases a r a'
+       else if a = a' && applies b r b' then applies_decreases b r b'
+       else ()
+     | _ -> ())
+
+let rec replay_bounded (src:expr) (dst:expr) (steps:list step)
+  : Lemma (requires (replay src dst steps))
+          (ensures (List.Tot.length steps <= size src))
+          (decreases steps) =
+  match steps with
+  | [] -> ()
+  | s :: rest ->
+    applies_decreases src s.rule s.after;
+    replay_bounded s.after dst rest
+
+let sample_trace_bounded ()
+  : Lemma (ensures (List.Tot.length [sample_add_zero; sample_mul_one] <= size sample_add_zero.before)) =
+  replay_bounded sample_add_zero.before sample_mul_one.after [sample_add_zero; sample_mul_one]

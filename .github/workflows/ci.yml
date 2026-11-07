@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Build and test
+        run: dotnet run --project BootLegLM.fsproj -c Release -- test
+
+  fstar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Runtime libraries
+        run: sudo apt-get update && sudo apt-get install -y libgmp10 libzstd1
+      - name: Install F* 2026.10.25
+        run: |
+          curl -fsSL -o /tmp/fstar.tar.gz https://github.com/FStarLang/FStar/releases/download/v2026.10.25/fstar-v2026.10.25-Linux-x86_64.tar.gz
+          mkdir -p "$HOME/fstar-dist"
+          tar -xzf /tmp/fstar.tar.gz -C "$HOME/fstar-dist" --strip-components=1
+      - name: Machine-check specifications
+        run: |
+          export PATH="$HOME/fstar-dist/bin:$PATH"
+          ./verify.sh
