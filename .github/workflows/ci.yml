@@ -24,9 +24,10 @@ jobs:
       - name: Install F* 2026.10.25
         run: |
           curl -fsSL -o /tmp/fstar.tar.gz https://github.com/FStarLang/FStar/releases/download/v2026.10.25/fstar-v2026.10.25-Linux-x86_64.tar.gz
-          mkdir -p "$HOME/fstar-dist"
-          tar -xzf /tmp/fstar.tar.gz -C "$HOME/fstar-dist" --strip-components=1
+          mkdir -p "$RUNNER_TEMP/fstar-src"
+          tar -xzf /tmp/fstar.tar.gz -C "$RUNNER_TEMP/fstar-src"
+          fstar_bin="$(find "$RUNNER_TEMP/fstar-src" -type f -name fstar.exe | head -n 1)"
+          test -n "$fstar_bin"
+          echo "FSTAR=$fstar_bin" >> "$GITHUB_ENV"
       - name: Machine-check specifications
-        run: |
-          export PATH="$HOME/fstar-dist/bin:$PATH"
-          ./verify.sh
+        run: ./verify.sh
