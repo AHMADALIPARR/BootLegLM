@@ -1,6 +1,6 @@
 # Reproducible evaluation protocol
 
-No benchmark figures are claimed in this repository: an executing .NET 8 toolchain is needed.
+Do not copy timings from this file into a performance claim. Wall-clock numbers belong in `docs/STATUS.md` only after the commands below have been run, and they describe that machine.
 
 ## Correctness (run first)
 
@@ -9,7 +9,7 @@ dotnet --info
 dotnet run --project BootLegLM.fsproj -c Release -- test
 ```
 
-Tests check matrix entries, causal masking/row sums, output shape, causal prefix invariance, byte-exact checkpoint/logit roundtrip, rejection of trailing checkpoint bytes, basic breadth-first rewriting, arithmetic equivalence over sample assignments, certificate replay and tampering rejection, and arbitrary precision constant folding.
+`test` checks matrix entries, causal masking and row sums, output shape, causal prefix invariance, argmax, deterministic token encoding, checkpoint roundtrip, digest and header rejection, non-finite and shape rejection, breadth-first rewriting, node budgets, arithmetic equivalence, certificate replay and tampering, arbitrary-precision folding, beam and best-first search, ranking labels, and the regex pass and size caps.
 
 ## Performance
 
@@ -17,15 +17,26 @@ Tests check matrix entries, causal masking/row sums, output shape, causal prefix
 dotnet run --project BootLegLM.fsproj -c Release --no-launch-profile -- bench
 ```
 
-The benchmark performs 20 warmup and 200 timed forward evaluations of an 8-token context (vocab=128, dim=16, FFN=32). Output contains the wall-clock duration and a checksum to prevent mistaking mere loop overhead for work. Capture CPU, operating system, `dotnet --info`, compiler configuration, and at least five independent process runs. Do not interpret `ms_per_forward` as autoregressive token latency or claim hardware speedups from it.
+The benchmark performs 20 warmup and 200 timed forward evaluations of an 8-token context (vocab=128, dim=16, FFN=32). The line contains the wall-clock duration and a checksum so a no-op loop cannot be mistaken for the work. Capture CPU, operating system, `dotnet --info`, compiler configuration, and at least five independent process runs. `ms_per_forward` is the measured forward time for this fixed context. It is not autoregressive token latency.
 
-## Reasoning/search
+## Reasoning and guided search
 
 ```sh
 dotnet run --project BootLegLM.fsproj -c Release -- reason '(a+0)*(b*1)'
+dotnet run --project BootLegLM.fsproj -c Release -- guided '(a+0)*(b*1)'
+dotnet run --project BootLegLM.fsproj -c Release -- guided '(a+0)*(b*1)' --strategy best
+dotnet run --project BootLegLM.fsproj -c Release -- traindata
 ```
 
-A deterministic bounded BFS explores a **small fixed set** of arithmetic identities and returns a trace replayed by an independent validation pass. `UNKNOWN` means the bounded search did not find a normal form; no theorem proving completeness is claimed. Arithmetic expressions use arbitrary-precision mathematical integers, matching the domain of the F* lemmas.
+`reason` is a deterministic bounded BFS over a fixed set of arithmetic identities. `guided` orders the same rules with the frozen transformer. Both return a trace that an independent checker replays. `UNKNOWN` and exit code 2 mean the node budget ended first. No completeness is claimed. `traindata` prints a ranking mean squared error. It does not update weights.
+
+## Regex front-end
+
+```sh
+dotnet run --project BootLegLM.fsproj -c Release -- rewrite examples/rules.roff 'x + 0'
+```
+
+This is a bounded regular-expression pass, not the certificate checker.
 
 ## F* formal checks
 
@@ -34,4 +45,4 @@ A deterministic bounded BFS explores a **small fixed set** of arithmetic identit
 # Override binary: FSTAR=/path/to/fstar.exe ./verify.sh
 ```
 
-This script exits on the first failed proof. The F* toolchain is absent in the creation environment, so these files are **not reported as machine-checked**. They specify mathematical integer identities and matrix indexing, not the machine-level semantics of F# floating-point matmul. That correspondence remains open.
+The script checks `proofs/RewriteSpec.fst`, `proofs/MatrixSpec.fst`, and `proofs/ProofState.fst`, and it exits on the first failure. The specifications are mathematical integers and certificate replay. They do not describe IEEE-754 floating-point matmul in the F# runtime.

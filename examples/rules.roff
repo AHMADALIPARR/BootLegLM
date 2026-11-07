@@ -1,3 +1,4 @@
 .\" BootLegLM regex rewriting rules, not general mathematical proof rules
+.\" The rewriter stops after 64 passes or before exceeding 8192 characters.
 .ds ZERO \b([A-Za-z]+)\s*\+\s*0\b => $1
 .ds ONE \b([A-Za-z]+)\s*\*\s*1\b => $1
