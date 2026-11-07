@@ -7,4 +7,5 @@ cd "$(dirname "$0")"
 "$FSTAR" proofs/RewriteSpec.fst
 "$FSTAR" proofs/MatrixSpec.fst
 "$FSTAR" proofs/ProofState.fst
+"$FSTAR" proofs/NumericModel.fst
 printf '%s\n' 'F* specifications machine-checked by installed F* toolchain.'

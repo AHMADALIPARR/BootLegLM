@@ -1,0 +1,20 @@
+bench_env,os=Unix 6.12.113.0,cpu=Intel(R) Xeon(R) Processor,logical_cpus=4,runtime=.NET 8.0.33,seed=42,vocab=128,dim=16,heads=4,layers=2,hidden=32
+bench_inference,repeats=5,min_ms=18.683700,median_ms=32.722100,max_ms=34.317000,checksum=-10.314740265845385
+bench_inference_run,index=1,ms=34.317000,checksum=-10.314740265845385
+bench_inference_run,index=2,ms=32.722100,checksum=-10.314740265845385
+bench_inference_run,index=3,ms=32.918900,checksum=-10.314740265845385
+bench_inference_run,index=4,ms=32.262100,checksum=-10.314740265845385
+bench_inference_run,index=5,ms=18.683700,checksum=-10.314740265845385
+bench_search,repeats=5,min_ms=1.868100,median_ms=1.950200,max_ms=9.635300,checksum=400
+bench_search_run,index=1,ms=9.635300,checksum=400
+bench_search_run,index=2,ms=1.971100,checksum=400
+bench_search_run,index=3,ms=1.950200,checksum=400
+bench_search_run,index=4,ms=1.938400,checksum=400
+bench_search_run,index=5,ms=1.868100,checksum=400
+bench_train,repeats=5,min_ms=20.082100,median_ms=20.511600,max_ms=29.176500,checksum=0.029382611825437509
+bench_train_run,index=1,ms=29.176500,checksum=0.029382611825437509
+bench_train_run,index=2,ms=20.639800,checksum=0.029382611825437509
+bench_train_run,index=3,ms=20.511600,checksum=0.029382611825437509
+bench_train_run,index=4,ms=20.241900,checksum=0.029382611825437509
+bench_train_run,index=5,ms=20.082100,checksum=0.029382611825437509
+bench_legacy_v2,benchmark,os=Unix 6.12.113.0,runtime=.NET 8.0.33,iterations=200,seq=8,vocab=128,dim=16,hidden=32,total_ms=68.387100,ms_per_forward=0.341936,checksum=-8.4242520795687188
