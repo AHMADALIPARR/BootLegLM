@@ -17,7 +17,6 @@ let mul_zero_left (x:int) : Lemma (ensures (0 * x = 0)) = ()
 let fold_add (x:int) (y:int) : Lemma (ensures (x + y = y + x)) = ()
 let fold_mul (x:int) (y:int) : Lemma (ensures (x * y = y * x)) = ()
 
-(* Evaluation is the identity on integers; soundness of the rules
-   follows immediately from the lemmas above for constant cases.
-   A full AST interpreter and measure-based termination proof
-   for the search are not yet machine-checked in this file. *)
+(* Root integer identities are the lemmas above. Contextual certificate
+   replay and its evaluation soundness are machine-checked in ProofState.
+   A measure-based termination proof for bounded search is not claimed. *)

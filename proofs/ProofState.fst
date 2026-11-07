@@ -4,7 +4,10 @@
 
 module ProofState
 
-(* Trusted proof-state kernel. Neural scores are not part of this module. *)
+(* Trusted proof-state kernel. Neural scores are not part of this module.
+   local_step and history_sound cover a root redex.
+   applies and replay cover the one-hole contextual closure checked by
+   the F# certificate checker. Search termination is not claimed. *)
 
 type expr =
   | EConst of int
@@ -81,3 +84,102 @@ let step_preserves (s:state) (r:rule) (e2:expr) (env: string -> int)
                  depth = s.depth + 1;
                  history = { rule = r; before = s.goal; after = e2 } :: s.history }
                env)) = ()
+
+(* One-hole contextual closure of local_step, matching F# successors:
+   a step rewrites the root or exactly one child, recursively. *)
+let rec applies (e:expr) (r:rule) (e2:expr) : Tot bool (decreases e) =
+  (match local_step e with
+   | Some (r', e') -> r = r' && e2 = e'
+   | None -> false)
+  || (match e, e2 with
+      | EAdd (a, b), EAdd (a', b') ->
+        (b = b' && applies a r a') || (a = a' && applies b r b')
+      | EMul (a, b), EMul (a', b') ->
+        (b = b' && applies a r a') || (a = a' && applies b r b')
+      | _ -> false)
+
+let rec applies_sound (e:expr) (r:rule) (e2:expr) (env:string -> int)
+  : Lemma (requires (applies e r e2))
+          (ensures (eval e env == eval e2 env))
+          (decreases e) =
+  match e with
+  | EConst _ | EVar _ -> ()
+  | EAdd (a, b) ->
+    (match local_step e with
+     | Some (r', e') ->
+       if r = r' && e2 = e' then local_sound e r e2 env
+       else ()
+     | None -> ());
+    (match e2 with
+     | EAdd (a', b') ->
+       if b = b' && applies a r a' then applies_sound a r a' env
+       else if a = a' && applies b r b' then applies_sound b r b' env
+       else ()
+     | _ -> ())
+  | EMul (a, b) ->
+    (match local_step e with
+     | Some (r', e') ->
+       if r = r' && e2 = e' then local_sound e r e2 env
+       else ()
+     | None -> ());
+    (match e2 with
+     | EMul (a', b') ->
+       if b = b' && applies a r a' then applies_sound a r a' env
+       else if a = a' && applies b r b' then applies_sound b r b' env
+       else ()
+     | _ -> ())
+
+let rec replay (src:expr) (dst:expr) (steps:list step) : Tot bool (decreases steps) =
+  match steps with
+  | [] -> src = dst
+  | s :: rest ->
+    s.before = src && applies src s.rule s.after && replay s.after dst rest
+
+let rec replay_sound (src:expr) (dst:expr) (steps:list step) (env:string -> int)
+  : Lemma (requires (replay src dst steps))
+          (ensures (eval src env == eval dst env))
+          (decreases steps) =
+  match steps with
+  | [] -> ()
+  | s :: rest ->
+    applies_sound src s.rule s.after env;
+    replay_sound s.after dst rest env
+
+let sample_add_zero : step = {
+  rule = AddZeroR;
+  before = EMul (EAdd (EVar "a", EConst 0), EMul (EVar "b", EConst 1));
+  after = EMul (EVar "a", EMul (EVar "b", EConst 1))
+}
+
+let sample_mul_one : step = {
+  rule = MulOneR;
+  before = sample_add_zero.after;
+  after = EMul (EVar "a", EVar "b")
+}
+
+let sample_trace_sound (env:string -> int)
+  : Lemma (ensures (
+      replay sample_add_zero.before sample_mul_one.after [sample_add_zero; sample_mul_one] /\
+      eval sample_add_zero.before env = eval sample_mul_one.after env)) =
+  replay_sound sample_add_zero.before sample_mul_one.after [sample_add_zero; sample_mul_one] env
+
+let sample_root_sound (env:string -> int)
+  : Lemma (ensures (
+      applies (EAdd (EVar "x", EConst 0)) AddZeroR (EVar "x") /\
+      eval (EAdd (EVar "x", EConst 0)) env = eval (EVar "x") env)) =
+  applies_sound (EAdd (EVar "x", EConst 0)) AddZeroR (EVar "x") env
+
+let sample_fold_inside_sound (env:string -> int)
+  : Lemma (ensures (
+      applies (EMul (EAdd (EConst 2, EConst 3), EVar "z")) FoldAdd (EMul (EConst 5, EVar "z")) /\
+      eval (EMul (EAdd (EConst 2, EConst 3), EVar "z")) env =
+        eval (EMul (EConst 5, EVar "z")) env)) =
+  applies_sound (EMul (EAdd (EConst 2, EConst 3), EVar "z")) FoldAdd (EMul (EConst 5, EVar "z")) env
+
+let sample_wrong_rule_rejected ()
+  : Lemma (ensures (applies (EAdd (EVar "a", EConst 0)) AddZeroL (EVar "a") = false)) = ()
+
+let sample_tampered_rejected ()
+  : Lemma (ensures (
+      replay sample_add_zero.before (EConst 999)
+        [{ sample_add_zero with after = EConst 999 }] = false)) = ()

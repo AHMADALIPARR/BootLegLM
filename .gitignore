@@ -8,3 +8,6 @@ obj/
 *.tmp
 .DS_Store
 *.log
+*.fst.checked
+*.checked
+*.hints

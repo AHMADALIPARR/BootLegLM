@@ -6,4 +6,5 @@ cd "$(dirname "$0")"
 : "${FSTAR:=fstar.exe}"
 "$FSTAR" proofs/RewriteSpec.fst
 "$FSTAR" proofs/MatrixSpec.fst
+"$FSTAR" proofs/ProofState.fst
 printf '%s\n' 'F* specifications machine-checked by installed F* toolchain.'
