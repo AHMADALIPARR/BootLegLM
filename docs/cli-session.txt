@@ -1,0 +1,99 @@
+$ dotnet exec BootLegLM.dll help
+BootLegLM
+  test
+  save <checkpoint.blm>
+  load <checkpoint.blm> <prompt>
+  train <corpus.txt> <checkpoint.blm> [--steps N] [--lr X] [--seq N] [--seed N]
+  reason <expression> [--nodes N]
+  guided <expression> [--strategy beam|best] [--beam N] [--nodes N]
+  prove <theorems.roff> [--nodes N]
+  traindata
+  bench
+  rewrite <rules.roff> <text>
+  help
+  <prompt>
+Exit codes: 0 success, 1 error, 2 search or theorem budget exhausted.
+Default stack: seed 42, vocab 128, dim 16, heads 4, layers 2, hidden 32.
+save writes BLM1 version 3. load still accepts version 2 single-head checkpoints.
+train updates weights with SGD on next-character cross-entropy. Default steps=40, lr=0.2, seq=12.
+reason node budget defaults to 10000. guided defaults to beam width 4 and 1000 nodes.
+best-first ignores --beam and keeps the frontier until --nodes.
+prove checks .thm NAME lhs = rhs by certified normalization. .ds lines stay regex rewrites.
+traindata prints a ranking MSE proxy and does not update weights.
+Regex rewrite stops after 64 passes or at 8192 characters.
+A bare prompt generates 16 tokens from the untrained default stack.
+
+$ dotnet exec BootLegLM.dll prove examples/theorems.roff
+ADD_ZERO: Proved (1 certificate steps)
+MUL_ZERO: Proved (1 certificate steps)
+SAMPLE: Proved (2 certificate steps)
+FOLD: Proved (2 certificate steps)
+LEFT: Proved (1 certificate steps)
+
+$ dotnet exec BootLegLM.dll train examples/corpus.txt /tmp/bootleg-trained.blm
+train,corpus=examples/corpus.txt,steps=40,seq=12,lr=0.200000,seed=42,layers=2,heads=4,dim=16,hidden=32,vocab=128
+loss_step=0,loss=4.806605
+loss_step=1,loss=4.283208
+loss_step=2,loss=3.039559
+loss_step=3,loss=1.933150
+loss_step=4,loss=1.057322
+loss_step=5,loss=0.566441
+loss_step=6,loss=0.319306
+loss_step=7,loss=0.194233
+loss_step=8,loss=0.137514
+loss_step=9,loss=0.106150
+loss_step=10,loss=0.085802
+loss_step=11,loss=0.071640
+loss_step=12,loss=0.061268
+loss_step=13,loss=0.053374
+loss_step=14,loss=0.047181
+loss_step=15,loss=0.042203
+loss_step=16,loss=0.038122
+loss_step=17,loss=0.958787
+loss_step=18,loss=1.124848
+loss_step=19,loss=0.790664
+loss_step=20,loss=0.119055
+loss_step=21,loss=0.068385
+loss_step=22,loss=0.050899
+loss_step=23,loss=0.041335
+loss_step=24,loss=0.034990
+loss_step=25,loss=0.030420
+loss_step=26,loss=0.026953
+loss_step=27,loss=0.024224
+loss_step=28,loss=0.022016
+loss_step=29,loss=0.020190
+loss_step=30,loss=0.018653
+loss_step=31,loss=0.017341
+loss_step=32,loss=0.016206
+loss_step=33,loss=0.015214
+loss_step=34,loss=0.014341
+loss_step=35,loss=0.013564
+loss_step=36,loss=0.012869
+loss_step=37,loss=0.736993
+loss_step=38,loss=0.608266
+loss_step=39,loss=0.504180
+saved=/tmp/bootleg-trained.blm,loss_initial=4.806605,loss_final=0.504180
+
+$ dotnet exec BootLegLM.dll load /tmp/bootleg-trained.blm abc
+Next token: 97
+format=BLM1v3
+
+$ dotnet exec BootLegLM.dll reason '(a+0)*(b*1)'
+AddZeroR: ((a+0)*(b*1)) -> (a*(b*1))
+MulOneR: (a*(b*1)) -> (a*b)
+CERTIFICATE: verified 2 steps
+RESULT: (a*b)
+
+$ dotnet exec BootLegLM.dll guided '(a+0)*(b*1)' --strategy best
+MulOneR: ((a+0)*(b*1)) -> ((a+0)*b)
+AddZeroR: ((a+0)*b) -> (a*b)
+CERTIFICATE: verified 2 steps (nodes=4)
+RESULT: (a*b)
+
+$ dotnet exec BootLegLM.dll HELLO
+Input: HELLO
+Generated token IDs: 81 104 79 81 104 79 81 104 79 81 104 79 81 104 79 81
+WARNING: default stack is randomly initialized and has not been trained.
+
+$ dotnet exec BootLegLM.dll rewrite examples/rules.roff 'x + 0'
+x (passes=2, limitReached=false)

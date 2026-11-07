@@ -312,16 +312,16 @@ module Guided =
             | Add(a,b) -> 1 + countOps a + countOps b
             | Mul(a,b) -> 1 + countOps a + countOps b
         [| float n; float (countVars e); float (countOps e); float (n % 8) |]
-    // Deterministic score from the fixed-seed transformer. Ordering only.
-    let score (w: Weights) (e: Expr) : float =
+    // Deterministic score from the default multi-layer network. Ordering only.
+    let score (w: Neural.Stack.Net) (e: Expr) : float =
         let feats = features e
-        let tokens = feats |> Array.map (fun f -> int (abs f) % defaultVocab)
+        let tokens = feats |> Array.map (fun f -> int (abs f) % w.Config.Vocab)
         if tokens.Length = 0 then 0.0 else
-        let logits = Model.forward w tokens
+        let logits = Neural.Stack.forward w tokens
         logits[tokens.Length - 1, 0]
     let private children expr =
         successors expr |> Seq.distinctBy snd |> Seq.toArray
-    let private rank (w: Weights) (left: Expr * Step list) (right: Expr * Step list) =
+    let private rank (w: Neural.Stack.Net) (left: Expr * Step list) (right: Expr * Step list) =
         let e1, _ = left
         let e2, _ = right
         let compared = compare (score w e2) (score w e1)
@@ -329,7 +329,7 @@ module Guided =
     // Beam search. Already-generated nodes are examined even when the node
     // budget was consumed by generating them, so a normal form at the budget
     // boundary is not dropped. Equal scores break ties by printed form.
-    let beamSearch (w: Weights) (beamWidth: int) (maxNodes: int) (input: Expr) =
+    let beamSearch (w: Neural.Stack.Net) (beamWidth: int) (maxNodes: int) (input: Expr) =
         if beamWidth < 1 || maxNodes < 1 then invalidArg "limits" "must be positive"
         let mutable beam = [| input, ([]: Step list) |]
         let visited = HashSet<Expr>()
@@ -355,7 +355,7 @@ module Guided =
         answer, nodes
     // Best-first search over the whole frontier, ordered by the same score.
     // Duplicate expressions are hashed once. maxNodes is the enqueue budget.
-    let bestFirst (w: Weights) (maxNodes: int) (input: Expr) =
+    let bestFirst (w: Neural.Stack.Net) (maxNodes: int) (input: Expr) =
         if maxNodes < 1 then invalidArg "maxNodes" "must be positive"
         let queue = PriorityQueue<Expr * Step list, float * string>()
         let visited = HashSet<Expr>()
@@ -444,6 +444,64 @@ module Bench =
             Runtime.InteropServices.RuntimeInformation.FrameworkDescription
             run.Iterations run.SeqLen run.Vocab run.Dim run.Hidden
             (Text.fixed6 run.TotalMs) (Text.fixed6 run.PerMs) (Text.general run.Checksum)
+    let private median (values: float[]) =
+        let sorted = Array.sort values
+        let n = sorted.Length
+        if n % 2 = 1 then sorted[n / 2] else (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
+    let private cpuName () =
+        try
+            File.ReadAllLines("/proc/cpuinfo")
+            |> Array.tryFind (fun line -> line.StartsWith("model name"))
+            |> Option.map (fun line -> line.Split(':', 2).[1].Trim())
+            |> Option.defaultValue "unknown"
+        with _ -> "unknown"
+    let reportSuite () =
+        let cfg = Neural.Stack.defaultConfig
+        printfn "bench_env,os=%s,cpu=%s,logical_cpus=%d,runtime=%s,seed=%d,vocab=%d,dim=%d,heads=%d,layers=%d,hidden=%d"
+            Environment.OSVersion.VersionString
+            (cpuName())
+            Environment.ProcessorCount
+            Runtime.InteropServices.RuntimeInformation.FrameworkDescription
+            Neural.Stack.defaultSeed cfg.Vocab cfg.Dim cfg.Heads cfg.Layers cfg.Hidden
+        let repeats = 5
+        let tokens = [|65; 66; 67; 68; 69; 70; 71; 72|]
+        let inference () =
+            let net = Neural.Stack.initDefault()
+            for _ in 1 .. 10 do Neural.Stack.forward net tokens |> ignore
+            let sw = Diagnostics.Stopwatch.StartNew()
+            let mutable digest = 0.0
+            for _ in 1 .. 100 do
+                let logits = Neural.Stack.forward net tokens
+                digest <- digest + logits[7, 0]
+            sw.Stop()
+            sw.Elapsed.TotalMilliseconds, digest
+        let search () =
+            let expr = Reasoning.parse "(a+0)*(b*1)"
+            let sw = Diagnostics.Stopwatch.StartNew()
+            let mutable steps = 0
+            for _ in 1 .. 200 do
+                match Reasoning.search 1000 expr with
+                | Some(_, trace) -> steps <- steps + trace.Length
+                | None -> ()
+            sw.Stop()
+            sw.Elapsed.TotalMilliseconds, float steps
+        let training () =
+            let corpus = Array.init 240 (fun i -> int ("abc".[i % 3]))
+            let net = Neural.Stack.initDefault()
+            let sw = Diagnostics.Stopwatch.StartNew()
+            let losses = Neural.Stack.train net corpus 20 12 0.2
+            sw.Stop()
+            sw.Elapsed.TotalMilliseconds, losses[losses.Length - 1]
+        let report name samples =
+            let times = samples |> Array.map fst
+            let marks = samples |> Array.map snd
+            printfn "bench_%s,repeats=%d,min_ms=%s,median_ms=%s,max_ms=%s,checksum=%s"
+                name samples.Length (Text.fixed6 (Array.min times)) (Text.fixed6 (median times)) (Text.fixed6 (Array.max times)) (Text.general marks[0])
+            for i in 0 .. samples.Length - 1 do
+                printfn "bench_%s_run,index=%d,ms=%s,checksum=%s" name (i + 1) (Text.fixed6 times[i]) (Text.general marks[i])
+        report "inference" (Array.init repeats (fun _ -> inference()))
+        report "search" (Array.init repeats (fun _ -> search()))
+        report "train" (Array.init repeats (fun _ -> training()))
 
 module Args =
     type ReasonOpts = { Expression: string; Nodes: int }
@@ -501,6 +559,27 @@ module Args =
                 i <- i + 1
         if parts.Count = 0 then failwith usageGuided
         { Expression = String.Join(" ", parts); Beam = beam; Nodes = nodes; Strategy = strategy }
+
+module Theorems =
+    type Status = Proved | Disproved | Unknown
+    type Result = { Name: string; Status: Status; Steps: int }
+    let load (path: string) =
+        File.ReadAllLines path
+        |> Array.choose (fun line ->
+            let m = Regex.Match(line, @"^\.thm\s+(\w+)\s+(.+?)\s+=\s+(.+)$")
+            if m.Success then Some (m.Groups[1].Value, m.Groups[2].Value.Trim(), m.Groups[3].Value.Trim()) else None)
+    let check maxNodes (name, left, right) =
+        let lhs = Reasoning.parse left
+        let rhs = Reasoning.parse right
+        match Reasoning.search maxNodes lhs, Reasoning.search maxNodes rhs with
+        | Some(normalLeft, traceLeft), Some(normalRight, traceRight) ->
+            if not (Reasoning.verifyTrace lhs normalLeft traceLeft && Reasoning.verifyTrace rhs normalRight traceRight) then
+                failwith "invalid theorem certificate"
+            if Reasoning.show normalLeft = Reasoning.show normalRight then
+                { Name = name; Status = Proved; Steps = traceLeft.Length + traceRight.Length }
+            else
+                { Name = name; Status = Disproved; Steps = traceLeft.Length + traceRight.Length }
+        | _ -> { Name = name; Status = Unknown; Steps = 0 }
 
 module Checks =
     open Tensor
@@ -692,7 +771,7 @@ module Checks =
         let negative = Args.parseReason [| "reason"; "a+0"; "--nodes"; "-1" |]
         expectMessage "positive" (fun () -> Reasoning.search negative.Nodes (Reasoning.parse negative.Expression) |> ignore)
     let private guided () =
-        let w = Model.defaultWeights()
+        let w = Neural.Stack.initDefault()
         let expr = Reasoning.parse "(a+0)*(b*1)"
         let assertSolved label input (found, nodes) =
             match found with
@@ -823,6 +902,77 @@ module Checks =
             File.WriteAllText(path, ".ds REDOS (a+)+$ => b\n")
             expectMessage "timed out" (fun () ->
                 Symbolic.rewrite (Symbolic.load path) (String('a', 30) + "X") |> ignore))
+    let private closeEnough a b = abs (a - b) <= 1e-8
+    let private stackTrainAndTheorems () =
+        let cfg = Neural.Stack.defaultConfig
+        if Neural.Stack.headDim cfg <> 4 then failwith "head dimension"
+        expectMessage "divisible" (fun () -> Neural.Stack.init { cfg with Heads = 3 } 1 |> ignore)
+        let net = Neural.Stack.initDefault()
+        let long = Neural.Stack.forward net [|10; 20; 30; 40|]
+        let short = Neural.Stack.forward net [|10; 20|]
+        let one = Neural.Stack.forward net [|10|]
+        if long.GetLength 0 <> 4 || long.GetLength 1 <> cfg.Vocab then failwith "stack logit shape"
+        if short.GetLength 0 <> 2 || one.GetLength 0 <> 1 then failwith "stack prefix shape"
+        for j in 0 .. cfg.Vocab - 1 do
+            if not (closeEnough long[0, j] short[0, j] && closeEnough long[0, j] one[0, j]) then failwith "position 0 saw the future"
+            if not (closeEnough long[1, j] short[1, j]) then failwith "position 1 saw the future"
+        let tiny : Neural.Stack.Config = { Vocab = 6; Dim = 4; Heads = 2; Layers = 1; Hidden = 6 }
+        let probe = Neural.Stack.init tiny 1
+        let sample = [|1; 2; 3; 1; 2|]
+        let _, grads = Neural.Stack.backward probe sample
+        let checkGrad name analytic read write =
+            let eps = 1e-4
+            let original = read()
+            write (original + eps)
+            let up = Neural.Stack.loss probe sample
+            write (original - eps)
+            let down = Neural.Stack.loss probe sample
+            write original
+            let numeric = (up - down) / (2.0 * eps)
+            if abs (numeric - analytic) > 1e-3 then failwithf "%s gradient %g vs numeric %g" name analytic numeric
+        checkGrad "embedding" grads.Emb[1, 0] (fun () -> probe.Emb[1, 0]) (fun v -> probe.Emb[1, 0] <- v)
+        checkGrad "query" grads.Layers[0].Wq[0, 1] (fun () -> probe.Layers[0].Wq[0, 1]) (fun v -> probe.Layers[0].Wq[0, 1] <- v)
+        checkGrad "layernorm" grads.Layers[0].Ln1G[1] (fun () -> probe.Layers[0].Ln1G[1]) (fun v -> probe.Layers[0].Ln1G[1] <- v)
+        checkGrad "head" grads.Head[1, 3] (fun () -> probe.Head[1, 3]) (fun v -> probe.Head[1, 3] <- v)
+        checkGrad "ffn" grads.Layers[0].W1[0, 1] (fun () -> probe.Layers[0].W1[0, 1]) (fun v -> probe.Layers[0].W1[0, 1] <- v)
+        let corpus = Neural.Stack.loadCorpus (Path.Combine(repoRoot(), "examples", "corpus.txt")) cfg.Vocab
+        let trained = Neural.Stack.initDefault()
+        let fresh = Neural.Stack.copy trained
+        let losses = Neural.Stack.train trained corpus 40 12 0.2
+        let again = Neural.Stack.initDefault()
+        let lossesAgain = Neural.Stack.train again corpus 40 12 0.2
+        if losses.Length <> 40 then failwith "training step count"
+        if losses[0] <> lossesAgain[0] || losses[losses.Length - 1] <> lossesAgain[lossesAgain.Length - 1] then
+            failwith "training is not reproducible"
+        if not (losses[losses.Length - 1] < losses[0] - 0.5) then
+            failwithf "loss did not improve: %g -> %g" losses[0] losses[losses.Length - 1]
+        let mutable moved = 0.0
+        for i in 0 .. cfg.Vocab - 1 do
+            for j in 0 .. cfg.Dim - 1 do
+                moved <- moved + abs (trained.Emb[i, j] - fresh.Emb[i, j])
+        if moved = 0.0 then failwith "training did not update weights"
+        if Double.IsNaN losses[losses.Length - 1] then failwith "final loss is not finite"
+        withTemp ".blm" (fun path ->
+            Neural.Stack.save path trained
+            let restored = Neural.Stack.load path
+            let a = Neural.Stack.forward trained [|65; 66; 67; 68|]
+            let b = Neural.Stack.forward restored [|65; 66; 67; 68|]
+            for i in 0 .. 3 do
+                for j in 0 .. cfg.Vocab - 1 do
+                    if a[i, j] <> b[i, j] then failwith "stack checkpoint changed logits"
+            let bytes = File.ReadAllBytes path
+            bytes[bytes.Length - 1] <- bytes[bytes.Length - 1] ^^^ 255uy
+            File.WriteAllBytes(path, bytes)
+            expectMessage "digest" (fun () -> Neural.Stack.load path |> ignore))
+        let theorems = Theorems.load (Path.Combine(repoRoot(), "examples", "theorems.roff"))
+        if theorems.Length < 4 then failwith "missing theorem declarations"
+        for decl in theorems do
+            let result = Theorems.check 10000 decl
+            if result.Status <> Theorems.Proved then failwithf "theorem %s was %A" result.Name result.Status
+        withTemp ".roff" (fun path ->
+            File.WriteAllText(path, ".thm BAD a+b = a\n")
+            let result = Theorems.check 100 (Theorems.load path).[0]
+            if result.Status <> Theorems.Disproved then failwith "false theorem was not rejected")
     let private bench () =
         let first = Bench.measure()
         let second = Bench.measure()
@@ -841,8 +991,9 @@ module Checks =
         guided()
         ranking()
         rewrite()
+        stackTrainAndTheorems()
         bench()
-        printfn "PASS: matmul, causal softmax, shapes, prefix invariance, checkpoint roundtrip/digest/shape/nonfinite, BFS budgets, certificates, big integers, guided beam and best-first, ranking labels, bounded regex rewrite"
+        printfn "PASS: matmul, causal softmax, shapes, prefix invariance, checkpoint roundtrip/digest/shape/nonfinite, BFS budgets, certificates, big integers, guided beam and best-first, ranking labels, bounded regex rewrite, multi-head stack, gradients, training, v3 checkpoints, roff theorems"
 
 module Cli =
     let printUsage () =
@@ -850,20 +1001,77 @@ module Cli =
         printfn "  test"
         printfn "  save <checkpoint.blm>"
         printfn "  load <checkpoint.blm> <prompt>"
+        printfn "  train <corpus.txt> <checkpoint.blm> [--steps N] [--lr X] [--seq N] [--seed N]"
         printfn "  reason <expression> [--nodes N]"
         printfn "  guided <expression> [--strategy beam|best] [--beam N] [--nodes N]"
+        printfn "  prove <theorems.roff> [--nodes N]"
         printfn "  traindata"
         printfn "  bench"
         printfn "  rewrite <rules.roff> <text>"
         printfn "  help"
         printfn "  <prompt>"
-        printfn "Exit codes: 0 success, 1 error, 2 bounded search exhausted."
-        printfn "Default weights: seed %d, vocab %d, dim %d, hidden %d." Model.defaultSeed Model.defaultVocab Model.defaultDim Model.defaultHidden
+        printfn "Exit codes: 0 success, 1 error, 2 search or theorem budget exhausted."
+        printfn "Default stack: seed %d, vocab %d, dim %d, heads %d, layers %d, hidden %d."
+            Neural.Stack.defaultSeed Neural.Stack.defaultConfig.Vocab Neural.Stack.defaultConfig.Dim
+            Neural.Stack.defaultConfig.Heads Neural.Stack.defaultConfig.Layers Neural.Stack.defaultConfig.Hidden
+        printfn "save writes BLM1 version 3. load still accepts version 2 single-head checkpoints."
+        printfn "train updates weights with SGD on next-character cross-entropy. Default steps=40, lr=0.2, seq=12."
         printfn "reason node budget defaults to 10000. guided defaults to beam width 4 and 1000 nodes."
         printfn "best-first ignores --beam and keeps the frontier until --nodes."
+        printfn "prove checks .thm NAME lhs = rhs by certified normalization. .ds lines stay regex rewrites."
         printfn "traindata prints a ranking MSE proxy and does not update weights."
         printfn "Regex rewrite stops after %d passes or at %d characters." Symbolic.maxPasses Symbolic.maxOutputChars
-        printfn "Any other arguments are a 16-token greedy generation from untrained weights."
+        printfn "A bare prompt generates 16 tokens from the untrained default stack."
+    let private peekVersion path =
+        use fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read)
+        use br = new BinaryReader(fs)
+        let magic = br.ReadInt32()
+        if magic <> 0x424C4D31 then failwith "invalid checkpoint header"
+        if fs.Length < 8L then failwith "checkpoint too small"
+        br.ReadInt32()
+    let private parseDouble flag (text: string) =
+        match Double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture) with
+        | true, value -> value
+        | _ -> failwithf "%s expects a number, got '%s'" flag text
+    let private parseTrain (argv: string array) =
+        if argv.Length < 3 then failwith "usage: train <corpus.txt> <checkpoint.blm> [--steps N] [--lr X] [--seq N] [--seed N]"
+        let mutable steps = 40
+        let mutable lr = 0.2
+        let mutable seqLen = 12
+        let mutable seed = Neural.Stack.defaultSeed
+        let mutable i = 3
+        while i < argv.Length do
+            match argv[i] with
+            | "--steps" ->
+                if i + 1 >= argv.Length then failwith "usage: train ... [--steps N]"
+                steps <- Int32.Parse(argv[i + 1], CultureInfo.InvariantCulture)
+                i <- i + 2
+            | "--lr" ->
+                if i + 1 >= argv.Length then failwith "usage: train ... [--lr X]"
+                lr <- parseDouble "--lr" argv[i + 1]
+                i <- i + 2
+            | "--seq" ->
+                if i + 1 >= argv.Length then failwith "usage: train ... [--seq N]"
+                seqLen <- Int32.Parse(argv[i + 1], CultureInfo.InvariantCulture)
+                i <- i + 2
+            | "--seed" ->
+                if i + 1 >= argv.Length then failwith "usage: train ... [--seed N]"
+                seed <- Int32.Parse(argv[i + 1], CultureInfo.InvariantCulture)
+                i <- i + 2
+            | _ -> failwith "usage: train <corpus.txt> <checkpoint.blm> [--steps N] [--lr X] [--seq N] [--seed N]"
+        argv[1], argv[2], steps, lr, seqLen, seed
+    let private parseProve (argv: string array) =
+        if argv.Length < 2 then failwith "usage: prove <theorems.roff> [--nodes N]"
+        let mutable nodes = 10000
+        let mutable i = 2
+        while i < argv.Length do
+            match argv[i] with
+            | "--nodes" ->
+                if i + 1 >= argv.Length then failwith "usage: prove <theorems.roff> [--nodes N]"
+                nodes <- Int32.Parse(argv[i + 1], CultureInfo.InvariantCulture)
+                i <- i + 2
+            | _ -> failwith "usage: prove <theorems.roff> [--nodes N]"
+        argv[1], nodes
     let private printTrace (steps: Reasoning.Step list) =
         for step in steps do
             printfn "%A: %s -> %s" step.Rule (Reasoning.show step.Before) (Reasoning.show step.After)
@@ -876,16 +1084,48 @@ module Cli =
             0
         elif argv.Length > 0 && argv[0] = "save" then
             if argv.Length <> 2 then failwith Args.usageSave
-            Checkpoint.save argv[1] (Model.defaultWeights())
+            Neural.Stack.save argv[1] (Neural.Stack.initDefault())
             printfn "Saved checkpoint: %s" argv[1]
+            printfn "format=BLM1v3,layers=%d,heads=%d,dim=%d" Neural.Stack.defaultConfig.Layers Neural.Stack.defaultConfig.Heads Neural.Stack.defaultConfig.Dim
             0
         elif argv.Length > 0 && argv[0] = "load" then
             if argv.Length < 3 then failwith Args.usageLoad
-            let w = Checkpoint.load argv[1]
             let tokens = Model.encode (String.Join(" ", argv[2..]))
-            let result = Model.forward w tokens
-            printfn "Next token: %d" (Model.nextToken result)
+            let version = peekVersion argv[1]
+            let logits =
+                if version = 2 then Model.forward (Checkpoint.load argv[1]) tokens
+                elif version = Neural.Stack.version then Neural.Stack.forward (Neural.Stack.load argv[1]) tokens
+                else failwith "unsupported checkpoint version"
+            printfn "Next token: %d" (Model.nextToken logits)
+            printfn "format=BLM1v%d" version
             0
+        elif argv.Length > 0 && argv[0] = "train" then
+            let corpus, output, steps, lr, seqLen, seed = parseTrain argv
+            let cfg = Neural.Stack.defaultConfig
+            let net = Neural.Stack.init cfg seed
+            let tokens = Neural.Stack.loadCorpus corpus cfg.Vocab
+            let losses = Neural.Stack.train net tokens steps seqLen lr
+            Neural.Stack.save output net
+            printfn "train,corpus=%s,steps=%d,seq=%d,lr=%s,seed=%d,layers=%d,heads=%d,dim=%d,hidden=%d,vocab=%d"
+                corpus steps seqLen (Text.fixed6 lr) seed cfg.Layers cfg.Heads cfg.Dim cfg.Hidden cfg.Vocab
+            for i in 0 .. losses.Length - 1 do
+                printfn "loss_step=%d,loss=%s" i (Text.fixed6 losses[i])
+            printfn "saved=%s,loss_initial=%s,loss_final=%s" output (Text.fixed6 losses[0]) (Text.fixed6 losses[losses.Length - 1])
+            0
+        elif argv.Length > 0 && argv[0] = "prove" then
+            let path, nodes = parseProve argv
+            let decls = Theorems.load path
+            if decls.Length = 0 then failwith "no .thm declarations"
+            let mutable unknown = 0
+            let mutable disproved = 0
+            for decl in decls do
+                let result = Theorems.check nodes decl
+                printfn "%s: %A (%d certificate steps)" result.Name result.Status result.Steps
+                if result.Status = Theorems.Unknown then unknown <- unknown + 1
+                if result.Status = Theorems.Disproved then disproved <- disproved + 1
+            if disproved > 0 then 1
+            elif unknown > 0 then 2
+            else 0
         elif argv.Length > 0 && argv[0] = "reason" then
             let opts = Args.parseReason argv
             let expr = Reasoning.parse opts.Expression
@@ -900,7 +1140,7 @@ module Cli =
         elif argv.Length > 0 && argv[0] = "guided" then
             let opts = Args.parseGuided argv
             let expr = Reasoning.parse opts.Expression
-            let w = Model.defaultWeights()
+            let w = Neural.Stack.initDefault()
             let strategy = Guided.parseStrategy opts.Strategy
             match Guided.solve strategy w opts.Beam opts.Nodes expr with
             | Some(normal, trace), nodes ->
@@ -918,8 +1158,9 @@ module Cli =
             printfn "examples=%d ranking_mse=%s" examples.Length (Text.fixed6 loss)
             0
         elif argv.Length > 0 && argv[0] = "bench" then
-            let run = Bench.measure()
-            printfn "%s" (Bench.format run)
+            Bench.reportSuite()
+            let legacy = Bench.measure()
+            printfn "bench_legacy_v2,%s" (Bench.format legacy)
             0
         elif argv.Length > 0 && argv[0] = "rewrite" then
             if argv.Length < 3 then failwith Args.usageRewrite
@@ -929,16 +1170,16 @@ module Cli =
             0
         else
             let prompt = if argv.Length = 0 then "BOOTLEG" else String.Join(" ", argv)
-            let w = Model.defaultWeights()
+            let net = Neural.Stack.initDefault()
             let mutable context = Model.encode prompt
             let generated = ResizeArray<char>()
             for _ in 1..16 do
-                let next = Model.forward w context |> Model.nextToken
+                let next = Neural.Stack.forward net context |> Model.nextToken
                 generated.Add(char next)
                 context <- Array.append context [|next|]
             printfn "Input: %s" prompt
             printfn "Generated token IDs: %s" (generated |> Seq.map (int >> string) |> String.concat " ")
-            printfn "WARNING: deterministic random weights; output is not trained language."
+            printfn "WARNING: default stack is randomly initialized and has not been trained."
             0
 
 [<EntryPoint>]

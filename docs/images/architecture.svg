@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="420" viewBox="0 0 920 420" role="img" aria-labelledby="title desc">
+  <title id="title">BootLegLM default stack</title>
+  <desc id="desc">Token ids enter an embedding, then two identical blocks. Each block is layer-norm, four-head causal attention, a residual add, layer-norm, a ReLU feed-forward layer, and another residual add. A final layer-norm and a vocabulary head produce logits.</desc>
+  <style>
+    text { font-family: Liberation Sans, DejaVu Sans, sans-serif; fill: #1c2430; }
+    .box { fill: #f4f7fb; stroke: #2c3e50; stroke-width: 1.5; }
+    .accent { fill: #e8f2ea; stroke: #1f7a4d; stroke-width: 1.5; }
+    .head { fill: #f8efe4; stroke: #8a5a2a; stroke-width: 1.5; }
+    .small { font-size: 13px; }
+    .title { font-size: 16px; font-weight: 700; }
+    .arrow { stroke: #2c3e50; stroke-width: 1.5; fill: none; marker-end: url(#m); }
+  </style>
+  <defs>
+    <marker id="m" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#2c3e50"/>
+    </marker>
+  </defs>
+  <text class="title" x="24" y="32">Default network, seed 42</text>
+  <text class="small" x="24" y="54">vocab 128, dim 16, 4 heads, 2 layers, feed-forward 32. Version 2 checkpoints skip this stack.</text>
+  <rect class="box" x="24" y="78" width="140" height="56" rx="6"/>
+  <text x="40" y="102">token ids</text>
+  <text class="small" x="40" y="120">char mod 128</text>
+  <path class="arrow" d="M164 106 H196"/>
+  <rect class="accent" x="200" y="78" width="150" height="56" rx="6"/>
+  <text x="228" y="102">embedding</text>
+  <text class="small" x="228" y="120">128 by 16</text>
+  <path class="arrow" d="M350 106 H382"/>
+  <rect class="box" x="386" y="70" width="300" height="250" rx="8"/>
+  <text class="title" x="404" y="96">block, repeated twice</text>
+  <rect class="head" x="406" y="112" width="260" height="36" rx="4"/>
+  <text class="small" x="422" y="135">layer-norm, then 4-head causal attention</text>
+  <rect class="accent" x="406" y="158" width="260" height="28" rx="4"/>
+  <text class="small" x="422" y="177">residual add with the block input</text>
+  <rect class="head" x="406" y="196" width="260" height="36" rx="4"/>
+  <text class="small" x="422" y="219">layer-norm, then ReLU feed-forward</text>
+  <rect class="accent" x="406" y="242" width="260" height="28" rx="4"/>
+  <text class="small" x="422" y="261">residual add</text>
+  <text class="small" x="406" y="300">Head width is 16 / 4 = 4. Future keys are masked.</text>
+  <path class="arrow" d="M686 196 H718"/>
+  <rect class="box" x="722" y="150" width="170" height="92" rx="6"/>
+  <text x="742" y="182">final layer-norm</text>
+  <text x="742" y="206">token head</text>
+  <text class="small" x="742" y="226">logits, 128 wide</text>
+</svg>
